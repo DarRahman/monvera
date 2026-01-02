@@ -1,10 +1,62 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// --- PERLIN NOISE IMPLEMENTATION ---
+const Noise = (function() {
+    const PERM = new Uint8Array(512);
+    const GRAD3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],
+                   [1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],
+                   [0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+    
+    function dot(g, x, y) { return g[0]*x + g[1]*y; }
+    
+    function seed(s) {
+        if(s > 0 && s < 1) s *= 65536;
+        s = Math.floor(s);
+        if(s < 256) s |= s << 8;
+        
+        for(let i = 0; i < 256; i++) {
+            let v;
+            if (i & 1) v = (i ^ (s & 255));
+            else v = (i ^ ((s>>8) & 255));
+            PERM[i] = PERM[i + 256] = v;
+        }
+    }
+
+    function noise2d(x, y) {
+        const X = Math.floor(x) & 255;
+        const Y = Math.floor(y) & 255;
+        x -= Math.floor(x);
+        y -= Math.floor(y);
+        
+        const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+        const u = fade(x);
+        const v = fade(y);
+        
+        const n00 = dot(GRAD3[PERM[X+PERM[Y]] % 12], x, y);
+        const n01 = dot(GRAD3[PERM[X+PERM[Y+1]] % 12], x, y-1);
+        const n10 = dot(GRAD3[PERM[X+1+PERM[Y]] % 12], x-1, y);
+        const n11 = dot(GRAD3[PERM[X+1+PERM[Y+1]] % 12], x-1, y-1);
+        
+        return 0.5 + 0.5 * (
+            (1-u)*(1-v)*n00 + 
+            (1-u)*v*n01 + 
+            u*(1-v)*n10 + 
+            u*v*n11
+        ); // Returns approx 0.0 to 1.0
+    }
+
+    return { seed, noise2d };
+})();
+
+// Initialize Noise
+const WORLD_SEED = 12345;
+Noise.seed(WORLD_SEED);
+
 // World & Camera System
 const world = {
-    width: 10000, // Increased from 4000 to 10000
-    height: 10000
+    width: 30000, 
+    height: 30000
 };
 
 const camera = {
@@ -14,11 +66,55 @@ const camera = {
     height: window.innerHeight
 };
 
+// Minimap Cache (To prevent lag on large maps)
+const minimapCache = document.createElement('canvas');
+const mmCtx = minimapCache.getContext('2d');
+const MM_SIZE = 250; 
+minimapCache.width = MM_SIZE;
+minimapCache.height = MM_SIZE;
+
+function generateMinimapCache() {
+    console.log("Generating Minimap Cache...");
+    const scale = MM_SIZE / world.width;
+    
+    mmCtx.fillStyle = '#000';
+    mmCtx.fillRect(0, 0, MM_SIZE, MM_SIZE);
+
+    // Draw Biomes (Static)
+    const step = 150; 
+    for (let my = 0; my < world.height; my += step) {
+        for (let mx = 0; mx < world.width; mx += step) {
+            const obj = getWorldObject(mx, my);
+            if (obj) {
+                if (obj === 'TREE') mmCtx.fillStyle = '#fff';
+                else if (obj === 'ROCK') mmCtx.fillStyle = '#666';
+                else if (obj === 'TALL_GRASS') mmCtx.fillStyle = '#1a3300';
+                mmCtx.fillRect(mx * scale, my * scale, step * scale, step * scale);
+            }
+        }
+    }
+
+    // Draw Town (Static)
+    mmCtx.fillStyle = town.color;
+    mmCtx.fillRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
+    mmCtx.strokeStyle = '#fff';
+    mmCtx.lineWidth = 1;
+    mmCtx.strokeRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
+
+    // Draw Landmarks (Static)
+    landmarks.forEach(l => {
+        mmCtx.fillStyle = l.color;
+        mmCtx.fillRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
+        mmCtx.strokeStyle = '#fff';
+        mmCtx.strokeRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
+    });
+}
+
 // Zoom Configuration
 // 1.0 = Normal (1 pixel = 1 unit)
 // 0.5 = Zoom Out (See 2x more area)
 // 0.6 = Balanced "Far" view
-const GAME_ZOOM = 0.6; 
+const GAME_ZOOM = 0.9; 
 
 // Set canvas size to match window size (Full Screen, No Black Bars)
 function resizeCanvas() {
@@ -55,7 +151,7 @@ const player = {
     x: world.width / 2, // Start in middle of world
     y: world.height / 2,
     size: 32,
-    speed: 6, // Slightly faster for larger map
+    speed: 4, // Slightly faster for larger map
     color: '#000'
 };
 
@@ -63,7 +159,7 @@ let isBattling = false;
 
 // Monster Spawning System
 const spawnedMonsters = [];
-const MAX_MONSTERS = 100; // Increased from 5 to 100 for large map
+const MAX_MONSTERS = 500; // Increased for 30k map
 
 // Rarity Config
 const RARITY_CONFIG = {
@@ -95,6 +191,46 @@ const town = {
     color: '#111' // Slightly lighter black for town floor
 };
 
+// Procedural Generation Logic
+const GRID_SIZE = 32;
+
+function getWorldObject(x, y) {
+    // 1. Check if inside Town (Safe Zone)
+    if (x > town.x && x < town.x + town.width && 
+        y > town.y && y < town.y + town.height) {
+        return null;
+    }
+
+    // 2. Check if inside Landmarks (Safe Zone)
+    for (const l of landmarks) {
+        if (x > l.x && x < l.x + l.w && y > l.y && y < l.y + l.h) {
+            return null;
+        }
+    }
+
+    // 3. Fractal Noise (3 Octaves)
+    const gx = Math.floor(x / GRID_SIZE);
+    const gy = Math.floor(y / GRID_SIZE);
+    
+    // Octave 1: Large scale (Basic shape)
+    const v1 = Noise.noise2d(gx * 0.015, gy * 0.015) * 0.65;
+    
+    // Octave 2: Medium scale (Variation)
+    const v2 = Noise.noise2d(gx * 0.05, gy * 0.05) * 0.25;
+    
+    // Octave 3: Small scale (Rough edges)
+    const v3 = Noise.noise2d(gx * 0.15, gy * 0.15) * 0.10;
+    
+    const value = v1 + v2 + v3;
+    
+    // Thresholds for Fractal Noise (Biomes)
+    if (value > 0.65) return 'TREE';
+    if (value < 0.32) return 'ROCK';
+    if (value >= 0.48 && value <= 0.65) return 'TALL_GRASS';
+    
+    return null;
+}
+// Buildings in Town
 const buildings = [
     { type: 'HEAL', x: town.x + 200, y: town.y + 200, w: 200, h: 150, label: 'HOSPITAL' },
     { type: 'SHOP', x: town.x + 800, y: town.y + 200, w: 200, h: 150, label: 'SHOP' }
@@ -145,17 +281,18 @@ function spawnMonster() {
     let attempts = 0;
     let validPosition = false;
 
-    // Try to find a spot outside the town
-    while (!validPosition && attempts < 10) {
+    // Try to find a spot that is TALL_GRASS
+    while (!validPosition && attempts < 50) {
         x = Math.random() * (world.width - 50) + 25;
         y = Math.random() * (world.height - 50) + 25;
         
-        // Check if inside town
-        if (x > town.x && x < town.x + town.width && 
-            y > town.y && y < town.y + town.height) {
-            attempts++;
-        } else {
+        // Check if on TALL_GRASS
+        const obj = getWorldObject(x, y);
+
+        if (obj === 'TALL_GRASS') {
             validPosition = true;
+        } else {
+            attempts++;
         }
     }
 
@@ -265,10 +402,36 @@ function update() {
     }
 
     let moved = false;
-    if (keys['ArrowUp'] || keys['w']) { player.y -= player.speed; moved = true; }
-    if (keys['ArrowDown'] || keys['s']) { player.y += player.speed; moved = true; }
-    if (keys['ArrowLeft'] || keys['a']) { player.x -= player.speed; moved = true; }
-    if (keys['ArrowRight'] || keys['d']) { player.x += player.speed; moved = true; }
+    let nextX = player.x;
+    let nextY = player.y;
+
+    if (keys['ArrowUp'] || keys['w']) { nextY -= player.speed; moved = true; }
+    if (keys['ArrowDown'] || keys['s']) { nextY += player.speed; moved = true; }
+    if (keys['ArrowLeft'] || keys['a']) { nextX -= player.speed; moved = true; }
+    if (keys['ArrowRight'] || keys['d']) { nextX += player.speed; moved = true; }
+
+    // Collision Check with World Objects
+    // Check all 4 corners of player box
+    const corners = [
+        {x: nextX, y: nextY},
+        {x: nextX + player.size, y: nextY},
+        {x: nextX, y: nextY + player.size},
+        {x: nextX + player.size, y: nextY + player.size}
+    ];
+
+    let collision = false;
+    for (const p of corners) {
+        const obj = getWorldObject(p.x, p.y);
+        if (obj === 'TREE' || obj === 'ROCK') {
+            collision = true;
+            break;
+        }
+    }
+
+    if (!collision) {
+        player.x = nextX;
+        player.y = nextY;
+    }
 
     // Boundary Checks (Keep player inside WORLD)
     if (player.x < 0) player.x = 0;
@@ -847,6 +1010,52 @@ window.equipMonster = async function(userMonsterId) {
     }
 };
 
+function drawMinimap() {
+    const mmPadding = 20;
+    const mmX = mmPadding;
+    const mmY = 60; 
+    const scale = MM_SIZE / world.width;
+
+    ctx.save();
+    
+    // Draw Cached Minimap (Terrain, Town, Landmarks)
+    ctx.drawImage(minimapCache, mmX, mmY);
+
+    // Draw Border
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(mmX, mmY, MM_SIZE, MM_SIZE);
+
+    // Clip to minimap area for dynamic elements
+    ctx.beginPath();
+    ctx.rect(mmX, mmY, MM_SIZE, MM_SIZE);
+    ctx.clip();
+
+    // Draw Monsters (Dynamic)
+    spawnedMonsters.forEach(m => {
+        ctx.fillStyle = m.color;
+        ctx.fillRect(mmX + m.x * scale, mmY + m.y * scale, 2, 2);
+    });
+
+    // Draw Player (Dynamic)
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(mmX + player.x * scale, mmY + player.y * scale, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw Camera Viewport (Dynamic)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(
+        mmX + camera.x * scale, 
+        mmY + camera.y * scale, 
+        camera.width * scale, 
+        camera.height * scale
+    );
+
+    ctx.restore();
+}
+
 function draw() {
     // Clear screen (Viewport)
     ctx.fillStyle = '#000'; 
@@ -864,6 +1073,41 @@ function draw() {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 5;
     ctx.strokeRect(0, 0, world.width, world.height);
+
+    // Draw Procedural Objects (Culling: Only visible ones)
+    // Calculate visible grid range
+    const startCol = Math.floor(Math.max(0, camera.x) / GRID_SIZE);
+    const endCol = Math.floor(Math.min(world.width, camera.x + camera.width) / GRID_SIZE);
+    const startRow = Math.floor(Math.max(0, camera.y) / GRID_SIZE);
+    const endRow = Math.floor(Math.min(world.height, camera.y + camera.height) / GRID_SIZE);
+
+    for (let gy = startRow; gy <= endRow; gy++) {
+        for (let gx = startCol; gx <= endCol; gx++) {
+            const x = gx * GRID_SIZE;
+            const y = gy * GRID_SIZE;
+            
+            // Use center of cell for noise check to be consistent
+            const obj = getWorldObject(x + GRID_SIZE/2, y + GRID_SIZE/2);
+            
+            if (obj === 'TREE') {
+                // Draw Tree (Triangle)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.moveTo(x + GRID_SIZE/2, y + 4);
+                ctx.lineTo(x + 4, y + GRID_SIZE - 4);
+                ctx.lineTo(x + GRID_SIZE - 4, y + GRID_SIZE - 4);
+                ctx.fill();
+            } else if (obj === 'ROCK') {
+                // Draw Rock (Circle/Square)
+                ctx.fillStyle = '#666';
+                ctx.fillRect(x + 4, y + 8, GRID_SIZE - 8, GRID_SIZE - 12);
+            } else if (obj === 'TALL_GRASS') {
+                // Draw Tall Grass (Dark Green Box)
+                ctx.fillStyle = '#1a3300'; // Dark Green
+                ctx.fillRect(x, y, GRID_SIZE, GRID_SIZE);
+            }
+        }
+    }
 
     // Draw Town Zone
     ctx.fillStyle = town.color;
@@ -955,6 +1199,8 @@ function draw() {
     ctx.fillStyle = '#fff';
     ctx.font = '20px monospace';
     ctx.fillText(`Pos: ${Math.round(player.x)}, ${Math.round(player.y)}`, 20, 30);
+
+    drawMinimap();
 }
 
 function gameLoop() {
@@ -987,6 +1233,10 @@ function showAlert(msg, callback = null) {
 // Start game
 async function initGame() {
     console.log("Initializing game...");
+    
+    // Generate Minimap Cache once at start
+    generateMinimapCache();
+
     // Check for starter pack
     try {
         const response = await fetch('/api/my-monsters/1');

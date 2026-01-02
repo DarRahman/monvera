@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Catch Monster - Monvera</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container-fluid p-0 game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- UI Overlay (Hidden by default or used for menus) -->
+        <div id="ui-layer" class="position-absolute top-0 start-0 w-100 h-100 pointer-events-none">
+            <div class="p-3">
+                <h1 class="text-white" style="text-shadow: 2px 2px 0 #000;">Monvera</h1>
+                <div id="debug-info" class="text-white bg-dark p-2 opacity-75" style="display: inline-block;">
+                    Connecting...
+                </div>
+            </div>
+            
+            <!-- Menu Buttons -->
+            <div class="position-absolute top-0 end-0 p-3 pointer-events-auto">
+                <button id="btn-pokedex" class="btn btn-info border border-2 border-white me-2 text-white" onclick="openPokedex()">
+                    Pokedex
+                </button>
+                <button id="btn-my-monsters" class="btn btn-primary border border-2 border-white" onclick="openMyMonsters()">
+                    My Monsters
+                </button>
+            </div>
+        </div>
+
+        <!-- Battle UI (Hidden by default) -->
+        <div id="battle-ui" class="position-absolute top-50 start-50 translate-middle bg-black p-0 border border-4 border-white rounded shadow" style="display: none; width: 800px; max-width: 95vw; z-index: 1000;">
+            <div class="row g-0">
+                <!-- Left Side: Battle Arena -->
+                <div class="col-md-8 p-4 position-relative" style="min-height: 400px; background: #111;">
+                    
+                    <!-- Enemy Area (Top Right) -->
+                    <div class="position-absolute top-0 end-0 m-4 text-end" style="width: 250px;">
+                        <div class="bg-dark border border-white p-2 mb-2 rounded">
+                            <h5 id="monster-name" class="fw-bold text-white mb-1">???</h5>
+                            <div class="d-flex justify-content-end gap-1 mb-1">
+                                <span id="monster-type" class="badge bg-secondary border border-white">???</span>
+                            </div>
+                            <div class="progress" style="height: 8px; background: #333;">
+                                <div id="monster-hp-bar" class="progress-bar bg-danger" role="progressbar" style="width: 100%"></div>
+                            </div>
+                            <div class="text-end text-white small mt-1" style="font-size: 0.7rem;">
+                                <span id="monster-hp-text">???/???</span>
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <div id="enemy-sprite" class="d-inline-block bg-white" style="width: 80px; height: 80px; image-rendering: pixelated;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Player Area (Bottom Left) -->
+                    <div class="position-absolute bottom-0 start-0 m-4 text-start" style="width: 250px;">
+                        <div class="text-center mb-2">
+                            <div id="player-sprite" class="d-inline-block bg-white" style="width: 80px; height: 80px; image-rendering: pixelated;"></div>
+                        </div>
+                        <div id="player-status" class="bg-dark border border-white p-2 rounded">
+                            <h5 id="my-monster-name" class="fw-bold text-white mb-1">None</h5>
+                            <div class="d-flex gap-1 mb-1">
+                                <span id="my-monster-type" class="badge bg-secondary border border-white">???</span>
+                            </div>
+                            <div class="progress mb-1" style="height: 8px; background: #333;">
+                                <div id="my-hp-bar" class="progress-bar bg-success" role="progressbar" style="width: 100%"></div>
+                            </div>
+                            <div class="d-flex justify-content-between text-white small" style="font-size: 0.7rem;">
+                                <span id="my-hp-text">0/0</span>
+                                <span id="my-exp-text">EXP: 0/0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Battle Message Overlay -->
+                    <div class="position-absolute bottom-0 start-50 translate-middle-x mb-2 w-100 text-center px-3">
+                        <div id="battle-message" class="text-warning fw-bold" style="text-shadow: 1px 1px 0 #000; min-height: 24px;"></div>
+                    </div>
+                </div>
+
+                <!-- Right Side: Actions -->
+                <div class="col-md-4 bg-black border-start border-white p-4 d-flex flex-column justify-content-center">
+                    <h4 class="text-white text-center mb-4 border-bottom border-white pb-2">COMMAND</h4>
+                    <div class="d-grid gap-3" id="battle-actions">
+                        <button class="btn btn-lg btn-outline-danger fw-bold text-uppercase" onclick="attackMonster()">Attack</button>
+                        <button class="btn btn-lg btn-outline-warning fw-bold text-uppercase" onclick="defendMonster()">Defend</button>
+                        <button class="btn btn-lg btn-outline-primary fw-bold text-uppercase" onclick="catchMonster()">Catch</button>
+                        <button class="btn btn-lg btn-outline-secondary fw-bold text-uppercase" onclick="runAway()">Run</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/socket.js"></script>
+    <script src="js/game.js"></script>
+
+    <!-- My Monsters Modal -->
+    <div class="modal fade" id="monstersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-white border border-white">
+                <div class="modal-header border-bottom border-white">
+                    <h5 class="modal-title">MY MONSTER COLLECTION</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="my-monster-list" class="list-group list-group-flush">
+                        <!-- List will be loaded here -->
+                        <div class="text-center">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pokedex Modal -->
+    <div class="modal fade" id="pokedexModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content bg-dark text-white border border-white">
+                <div class="modal-header border-bottom border-white">
+                    <h5 class="modal-title">MONVERA POKEDEX</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="pokedex-list" class="row g-3">
+                        <!-- List will be loaded here -->
+                        <div class="text-center">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Alert Modal -->
+    <div id="custom-alert" class="position-fixed top-0 start-0 w-100 h-100 d-none justify-content-center align-items-center" style="z-index: 9999; background: rgba(0,0,0,0.8);">
+        <div class="bg-black border border-white p-4 text-center" style="min-width: 300px; max-width: 80%;">
+            <div id="custom-alert-msg" class="text-white mb-4" style="font-family: 'Courier New', monospace; white-space: pre-line;"></div>
+            <button id="custom-alert-btn" class="btn btn-outline-light rounded-0 px-4">OK</button>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS (Required for Modals) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

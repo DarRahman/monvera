@@ -11,6 +11,39 @@ class Monster {
         return rows[0];
     }
 
+    static async getPlayerInfo(userId) {
+        const [rows] = await db.query('SELECT id, username, level, exp FROM users WHERE id = ?', [userId]);
+        if (!rows[0]) return null;
+        
+        const player = rows[0];
+        // Exponential EXP formula: easier at start, harder later
+        player.exp_req = Math.floor(100 * Math.pow(player.level, 1.5)); 
+        return player;
+    }
+
+    static async addPlayerExp(userId, expAmount) {
+        const player = await this.getPlayerInfo(userId);
+        if (!player) return null;
+
+        player.exp += expAmount;
+        let leveledUp = false;
+        let expReq = Math.floor(100 * Math.pow(player.level, 1.5));
+
+        while (player.exp >= expReq && player.level < 200) {
+            player.exp -= expReq;
+            player.level++;
+            leveledUp = true;
+            expReq = Math.floor(100 * Math.pow(player.level, 1.5));
+        }
+
+        await db.query('UPDATE users SET level = ?, exp = ? WHERE id = ?', [player.level, player.exp, userId]);
+        
+        // Debug log to verify DB update
+        console.log(`Player ${userId} updated: Level ${player.level}, EXP ${player.exp}`);
+        
+        return { level: player.level, exp: player.exp, leveledUp };
+    }
+
     static async findRandom(rarity = null) {
         let query = 'SELECT * FROM monsters';
         const params = [];
@@ -63,7 +96,7 @@ class Monster {
             max_hp: Math.floor(baseStats.base_hp * totalMult),
             attack: Math.floor(baseStats.base_attack * totalMult),
             defense: Math.floor(baseStats.base_defense * totalMult),
-            exp_req: 100 + (level * 50) // Linear Growth: 150, 200, 250...
+            exp_req: Math.floor(100 * Math.pow(level, 1.3)) // Exponential Growth
         };
     }
 
@@ -86,14 +119,14 @@ class Monster {
 
         // 3. Level Up Logic
         // Calculate exp_req for current level
-        let expReq = 100 + (monster.level * 50);
+        let expReq = Math.floor(100 * Math.pow(monster.level, 1.3));
 
         while (monster.exp >= expReq) {
             monster.exp -= expReq;
             monster.level++;
             leveledUp = true;
             // Recalculate expReq for NEW level
-            expReq = 100 + (monster.level * 50);
+            expReq = Math.floor(100 * Math.pow(monster.level, 1.3));
         }
 
         // 4. Update DB
@@ -127,6 +160,12 @@ class Monster {
 
     static async updateHp(userMonsterId, hp) {
         await db.query('UPDATE user_monsters SET current_hp = ? WHERE id = ?', [hp, userMonsterId]);
+    }
+
+    static async releaseMonster(userMonsterId, userId) {
+        // Ensure we don't release the last monster if possible, or handle it in UI
+        const [result] = await db.query('DELETE FROM user_monsters WHERE id = ? AND user_id = ?', [userMonsterId, userId]);
+        return result.affectedRows > 0;
     }
 
     static async findActiveByUserId(userId) {

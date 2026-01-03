@@ -15,6 +15,14 @@
         <div id="ui-layer" class="position-absolute top-0 start-0 w-100 h-100 pointer-events-none">
             <div class="p-3">
                 <h1 class="text-white" style="text-shadow: 2px 2px 0 #000;">Monvera</h1>
+                <div id="player-info" class="text-white bg-dark p-2 border border-white mb-2 pointer-events-auto" style="display: inline-block; min-width: 150px;">
+                    <div class="fw-bold">Player Lv.<span id="player-level">1</span></div>
+                    <div class="progress mt-1" style="height: 5px; background: #333;">
+                        <div id="player-exp-bar" class="progress-bar bg-info" style="width: 0%"></div>
+                    </div>
+                    <div class="small mt-1" style="font-size: 0.7rem;">EXP: <span id="player-exp-text">0/100</span></div>
+                </div>
+                <br>
                 <div id="debug-info" class="text-white bg-dark p-2 opacity-75" style="display: inline-block;">
                     Connecting...
                 </div>
@@ -140,7 +148,10 @@
     <div id="custom-alert" class="position-fixed top-0 start-0 w-100 h-100 d-none justify-content-center align-items-center" style="z-index: 9999; background: rgba(0,0,0,0.8);">
         <div class="bg-black border border-white p-4 text-center" style="min-width: 300px; max-width: 80%;">
             <div id="custom-alert-msg" class="text-white mb-4" style="font-family: 'Courier New', monospace; white-space: pre-line;"></div>
-            <button id="custom-alert-btn" class="btn btn-outline-light rounded-0 px-4">OK</button>
+            <div class="d-flex justify-content-center gap-2">
+                <button id="custom-alert-cancel" class="btn btn-outline-danger rounded-0 px-4 d-none">CANCEL</button>
+                <button id="custom-alert-btn" class="btn btn-outline-light rounded-0 px-4">OK</button>
+            </div>
         </div>
     </div>
 

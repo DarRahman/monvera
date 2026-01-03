@@ -55,8 +55,8 @@ Noise.seed(WORLD_SEED);
 
 // World & Camera System
 const world = {
-    width: 10000, // Increased from 4000 to 10000
-    height: 10000
+    width: 30000, // Increased to 30k as requested
+    height: 30000
 };
 
 const camera = {
@@ -65,6 +65,61 @@ const camera = {
     width: window.innerWidth,
     height: window.innerHeight
 };
+
+// Minimap Cache
+const MINIMAP_SIZE = 200;
+const minimapCache = document.createElement('canvas');
+minimapCache.width = MINIMAP_SIZE;
+minimapCache.height = MINIMAP_SIZE;
+const mctx = minimapCache.getContext('2d');
+let minimapReady = false;
+
+function initMinimapCache() {
+    console.log("Generating minimap cache...");
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+
+    const scale = MINIMAP_SIZE / world.width;
+
+    // 1. Draw Terrain (Sampling)
+    // To avoid lag, we sample the world at minimap resolution
+    for (let my = 0; my < MINIMAP_SIZE; my++) {
+        for (let mx = 0; mx < MINIMAP_SIZE; mx++) {
+            const wx = mx / scale;
+            const wy = my / scale;
+            const obj = getWorldObject(wx, wy);
+
+            if (obj === 'TREE') {
+                mctx.fillStyle = '#fff';
+                mctx.fillRect(mx, my, 1, 1);
+            } else if (obj === 'ROCK') {
+                mctx.fillStyle = '#666';
+                mctx.fillRect(mx, my, 1, 1);
+            } else if (obj === 'TALL_GRASS') {
+                mctx.fillStyle = '#1a3300';
+                mctx.fillRect(mx, my, 1, 1);
+            }
+        }
+    }
+
+    // 2. Draw Town
+    mctx.fillStyle = '#333';
+    mctx.fillRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
+    mctx.strokeStyle = '#fff';
+    mctx.lineWidth = 1;
+    mctx.strokeRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
+
+    // 3. Draw Landmarks
+    landmarks.forEach(l => {
+        mctx.fillStyle = l.color;
+        mctx.fillRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
+        mctx.strokeStyle = '#fff';
+        mctx.strokeRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
+    });
+
+    minimapReady = true;
+    console.log("Minimap cache ready!");
+}
 
 // Zoom Configuration
 // 1.0 = Normal (1 pixel = 1 unit)
@@ -115,7 +170,7 @@ let isBattling = false;
 
 // Monster Spawning System
 const spawnedMonsters = [];
-const MAX_MONSTERS = 100; // Increased from 5 to 100 for large map
+const MAX_MONSTERS = 1500; // Increased for 30k map to make it feel more populated
 
 // Rarity Config
 const RARITY_CONFIG = {
@@ -196,7 +251,7 @@ const buildings = [
 const landmarks = [
     { 
         type: 'SHRINE', 
-        x: 2000, y: 2000, 
+        x: world.width * 0.2, y: world.height * 0.2, 
         w: 300, h: 300, 
         color: '#222', 
         label: 'ANCIENT SHRINE',
@@ -204,7 +259,7 @@ const landmarks = [
     },
     { 
         type: 'ARENA', 
-        x: 8000, y: 2000, 
+        x: world.width * 0.8, y: world.height * 0.2, 
         w: 400, h: 400, 
         color: '#333', 
         label: 'BATTLE ARENA',
@@ -212,7 +267,7 @@ const landmarks = [
     },
     { 
         type: 'CAVE', 
-        x: 2000, y: 8000, 
+        x: world.width * 0.2, y: world.height * 0.8, 
         w: 250, h: 250, 
         color: '#111', 
         label: 'DEEP CAVE',
@@ -220,7 +275,7 @@ const landmarks = [
     },
     { 
         type: 'TOWER', 
-        x: 8000, y: 8000, 
+        x: world.width * 0.8, y: world.height * 0.8, 
         w: 200, h: 600, 
         color: '#444', 
         label: 'SKY TOWER',
@@ -237,8 +292,9 @@ function spawnMonster() {
     let attempts = 0;
     let validPosition = false;
 
-    // Try to find a spot outside the town AND not on an object
-    while (!validPosition && attempts < 20) {
+    // Try to find a spot outside the town AND on TALL_GRASS
+    // Increased attempts to 200 to ensure we find grass in a large map
+    while (!validPosition && attempts < 200) {
         x = Math.random() * (world.width - 50) + 25;
         y = Math.random() * (world.height - 50) + 25;
         
@@ -246,17 +302,17 @@ function spawnMonster() {
         const inTown = (x > town.x && x < town.x + town.width && 
                         y > town.y && y < town.y + town.height);
         
-        // Check if on object (Tree/Rock)
-        const onObject = getWorldObject(x, y) !== null;
+        // Check if on TALL_GRASS (Monsters only spawn in grass)
+        const onGrass = getWorldObject(x, y) === 'TALL_GRASS';
 
-        if (!inTown && !onObject) {
+        if (!inTown && onGrass) {
             validPosition = true;
         } else {
             attempts++;
         }
     }
 
-    if (!validPosition) return; // Skip spawn if no valid spot found
+    if (!validPosition) return; // Skip spawn if no valid spot found after 200 attempts
 
     spawnedMonsters.push({
         x: x,
@@ -456,13 +512,15 @@ async function startBattle(rarity = 'N') {
     // document.getElementById('battle-actions').style.display = 'grid'; // Already grid in new layout
 
     try {
-        // 1. Fetch Wild Monster with specific Rarity
-        const response = await fetch(`/api/monsters/random?rarity=${rarity}`);
+        // 1. Fetch Wild Monster with specific Rarity and scale to Player Level
+        const response = await fetch(`/api/monsters/random?rarity=${rarity}&userId=1`);
+        if (!response.ok) throw new Error('Failed to fetch wild monster');
         currentMonster = await response.json();
         currentMonsterHP = currentMonster.max_hp; // Use calculated max_hp
         
         // 2. Fetch My Active Monster
         const myMonResponse = await fetch('/api/my-monsters/active/1'); // Hardcoded User ID 1
+        if (!myMonResponse.ok) throw new Error('Failed to fetch active monster');
         myActiveMonster = await myMonResponse.json();
 
         // Update Enemy UI
@@ -483,15 +541,26 @@ async function startBattle(rarity = 'N') {
 
             myMonsterHP = myActiveMonster.current_hp; // Use current HP from DB
             updatePlayerHealthUI();
+
+            // Check if fainted
+            if (myMonsterHP <= 0) {
+                showAlert("Your active monster has fainted! Heal it first at the Hospital or wait for auto-heal.");
+                endBattle();
+                return;
+            }
         } else {
             playerStatusDiv.style.visibility = 'hidden';
             myMonsterHP = 0;
+            showAlert("You don't have an active monster! Equip one in 'My Monsters' menu.");
+            endBattle();
+            return;
         }
 
         updateHealthUI();
         
     } catch (err) {
         console.error('Error fetching battle data:', err);
+        showAlert("Battle Error: Could not connect to server or database.");
         endBattle();
     }
 }
@@ -629,10 +698,19 @@ window.attackMonster = async function() {
             });
             const result = await response.json();
             
-            let msg = `${currentMonster.name} fainted! You won!\nGained ${result.expGain} EXP.`;
-            if (result.leveledUp) {
-                msg += `\nLevel Up! Now Level ${result.level}!`;
+            let msg = `${currentMonster.name} fainted! You won!\n`;
+            msg += `Monster: +${result.expGain} EXP. `;
+            if (result.monster && result.monster.leveledUp) {
+                msg += `(Level Up! Now Lv.${result.monster.level})`;
             }
+            
+            msg += `\nPlayer: +${result.playerExpGain} EXP. `;
+            if (result.player && result.player.leveledUp) {
+                msg += `(Level Up! Now Lv.${result.player.level})`;
+            }
+            
+            // Update Player UI
+            updatePlayerInfoUI();
             
             setTimeout(() => {
                 showAlert(msg, () => endBattle());
@@ -755,13 +833,21 @@ window.catchMonster = async function() {
             const result = await response.json();
             
             if (response.ok) {
-                let msg = `Gotcha! ${currentMonster.name} was caught!`;
+                let msg = `Gotcha! ${currentMonster.name} was caught!\n`;
                 if (result.expGain > 0) {
-                    msg += `\nGained ${result.expGain} EXP.`;
+                    msg += `Monster: +${result.expGain} EXP. `;
                 }
                 if (result.expResult && result.expResult.leveledUp) {
-                    msg += `\nLevel Up! Now Level ${result.expResult.level}!`;
+                    msg += `(Level Up! Now Lv.${result.expResult.level})`;
                 }
+                
+                if (result.playerExpGain > 0) {
+                    msg += `\nPlayer: +${result.playerExpGain} EXP.`;
+                }
+                
+                // Update Player UI
+                updatePlayerInfoUI();
+
                 showAlert(msg, () => endBattle());
             } else {
                 showAlert('Failed to catch: ' + result.message);
@@ -829,8 +915,8 @@ async function endBattle() {
         console.error('Error checking fainted monsters:', err);
     }
 
-    // Respawn monster after random delay (0-15 seconds)
-    const delay = Math.random() * 15000;
+    // Respawn monster after random delay (0-5 seconds)
+    const delay = Math.random() * 5000;
     setTimeout(spawnMonster, delay);
 }
 
@@ -919,12 +1005,17 @@ async function loadMyMonsters() {
             const activeBadge = m.is_active ? '<span class="badge bg-success me-2">Equipped</span>' : '';
             
             let equipBtn = '';
+            let releaseBtn = '';
+            
             if (m.is_active) {
                 equipBtn = '';
-            } else if (m.current_hp <= 0) {
-                equipBtn = '<span class="badge bg-danger">Fainted</span>';
             } else {
-                equipBtn = `<button class="btn btn-sm btn-outline-primary" onclick="equipMonster(${m.id})">Equip</button>`;
+                if (m.current_hp <= 0) {
+                    equipBtn = '<span class="badge bg-danger me-1">Fainted</span>';
+                } else {
+                    equipBtn = `<button class="btn btn-sm btn-outline-primary me-1" onclick="equipMonster(${m.id})">Equip</button>`;
+                }
+                releaseBtn = `<button class="btn btn-sm btn-outline-danger" onclick="releaseMonster(${m.id})">Release</button>`;
             }
 
             item.innerHTML = `
@@ -938,8 +1029,9 @@ async function loadMyMonsters() {
                         <span class="text-muted">EXP: ${m.exp}/${m.exp_req}</span>
                     </p>
                 </div>
-                <div>
+                <div class="d-flex align-items-center">
                     ${equipBtn}
+                    ${releaseBtn}
                 </div>
             `;
             listContainer.appendChild(item);
@@ -969,6 +1061,72 @@ window.equipMonster = async function(userMonsterId) {
         console.error(err);
     }
 };
+
+window.releaseMonster = async function(userMonsterId) {
+    showAlert("Are you sure you want to release this monster? It will be gone forever!", async (confirmed) => {
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch('/api/monster/release', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: 1, userMonsterId: userMonsterId })
+            });
+            
+            const result = await response.json();
+            if (response.ok) {
+                showAlert(result.message);
+                loadMyMonsters();
+            } else {
+                showAlert(result.message);
+            }
+        } catch (err) {
+            console.error(err);
+            showAlert('Error releasing monster');
+        }
+    }, true);
+};
+
+function drawMinimap() {
+    if (!minimapReady) return;
+
+    const size = MINIMAP_SIZE;
+    const margin = 20;
+    const x = canvas.width - size - margin;
+    const y = canvas.height - size - margin;
+    
+    // Scale factor
+    const scaleX = size / world.width;
+    const scaleY = size / world.height;
+
+    // Draw Cached Minimap (Terrain, Town, Landmarks)
+    ctx.drawImage(minimapCache, x, y);
+    
+    // Border
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, size, size);
+
+    // Draw Player
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(
+        x + player.x * scaleX, 
+        y + player.y * scaleY, 
+        3, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    // Draw Camera Viewport (Rectangle showing what we see)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(
+        x + camera.x * scaleX,
+        y + camera.y * scaleY,
+        camera.width * scaleX,
+        camera.height * scaleY
+    );
+}
 
 function draw() {
     // Clear screen (Viewport)
@@ -1113,6 +1271,9 @@ function draw() {
     ctx.fillStyle = '#fff';
     ctx.font = '20px monospace';
     ctx.fillText(`Pos: ${Math.round(player.x)}, ${Math.round(player.y)}`, 20, 30);
+
+    // Draw Minimap
+    drawMinimap();
 }
 
 function gameLoop() {
@@ -1122,29 +1283,69 @@ function gameLoop() {
 }
 
 // Custom Alert System
-function showAlert(msg, callback = null) {
+function showAlert(msg, callback = null, isConfirm = false) {
     const alertEl = document.getElementById('custom-alert');
     const msgEl = document.getElementById('custom-alert-msg');
     const btnEl = document.getElementById('custom-alert-btn');
+    const cancelBtn = document.getElementById('custom-alert-cancel');
 
     msgEl.innerText = msg;
     alertEl.classList.remove('d-none');
     alertEl.classList.add('d-flex');
 
+    // Show/Hide Cancel button
+    if (isConfirm) {
+        cancelBtn.classList.remove('d-none');
+    } else {
+        cancelBtn.classList.add('d-none');
+    }
+
     // Remove old event listeners to prevent stacking
     const newBtn = btnEl.cloneNode(true);
     btnEl.parentNode.replaceChild(newBtn, btnEl);
+    
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
 
     newBtn.addEventListener('click', () => {
         alertEl.classList.add('d-none');
         alertEl.classList.remove('d-flex');
-        if (callback) callback();
+        if (callback) callback(true);
     });
+
+    newCancelBtn.addEventListener('click', () => {
+        alertEl.classList.add('d-none');
+        alertEl.classList.remove('d-flex');
+        if (callback) callback(false);
+    });
+}
+
+async function updatePlayerInfoUI() {
+    try {
+        const response = await fetch('/api/player/1'); // Hardcoded User ID 1
+        if (!response.ok) return;
+        const data = await response.json();
+        
+        document.getElementById('player-level').innerText = data.level;
+        document.getElementById('player-exp-text').innerText = `${data.exp}/${data.exp_req}`;
+        
+        const percent = (data.exp / data.exp_req) * 100;
+        document.getElementById('player-exp-bar').style.width = percent + '%';
+    } catch (err) {
+        console.error('Error updating player info:', err);
+    }
 }
 
 // Start game
 async function initGame() {
     console.log("Initializing game...");
+    
+    // Initialize Minimap Cache
+    initMinimapCache();
+
+    // Load initial player info
+    await updatePlayerInfoUI();
+
     // Check for starter pack
     try {
         const response = await fetch('/api/my-monsters/1');

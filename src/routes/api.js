@@ -23,10 +23,16 @@ router.post('/battle/win', monsterController.winBattle);
 // Route untuk update HP (Run/Catch)
 router.post('/monster/hp', monsterController.updateHp);
 
+// Route untuk buang monster
+router.post('/monster/release', monsterController.releaseMonster);
+
 // Route untuk mendapatkan monster aktif
 router.get('/my-monsters/active/:userId', monsterController.getActiveMonster);
 
 // Route untuk mendapatkan monster milik player tertentu
 router.get('/my-monsters/:userId', monsterController.getPlayerMonsters);
+
+// Route untuk mendapatkan info player (Level, EXP)
+router.get('/player/:userId', monsterController.getPlayerInfo);
 
 module.exports = router;

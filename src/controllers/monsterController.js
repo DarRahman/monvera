@@ -21,17 +21,40 @@ exports.getPlayerMonsters = async (req, res) => {
     }
 };
 
+exports.getPlayerInfo = async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        const player = await Monster.getPlayerInfo(userId);
+        if (!player) {
+            return res.status(404).json({ message: 'Player not found' });
+        }
+        res.json(player);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
 exports.getRandomMonster = async (req, res) => {
     try {
-        const rarity = req.query.rarity; // Get rarity from query param
+        const { rarity, userId } = req.query;
         const monster = await Monster.findRandom(rarity);
         
         if (!monster) {
             return res.status(404).json({ message: 'No monsters found in database' });
         }
 
-        // Random Level 1-5
-        const level = Math.floor(Math.random() * 5) + 1;
+        // --- SCALE LEVEL BASED ON PLAYER ---
+        let playerLevel = 1;
+        if (userId) {
+            const player = await Monster.getPlayerInfo(userId);
+            if (player) playerLevel = player.level;
+        }
+
+        // Wild monster level: PlayerLevel +/- 2 (Min 1, Max 200)
+        let minLvl = Math.max(1, playerLevel - 2);
+        let maxLvl = Math.min(200, playerLevel + 2);
+        const level = Math.floor(Math.random() * (maxLvl - minLvl + 1)) + minLvl;
 
         // Calculate stats for this level
         const stats = Monster.calculateStats(monster, level, monster.rarity);
@@ -50,6 +73,12 @@ exports.catchMonster = async (req, res) => {
         // Basic validation
         if (!userId || !monsterId) {
             return res.status(400).json({ message: 'Missing required fields' });
+        }
+
+        // --- LIMIT CHECK (Max 10 Monsters) ---
+        const existingMonsters = await Monster.findByUserId(userId);
+        if (existingMonsters.length >= 10) {
+            return res.status(400).json({ message: 'You can only carry 10 monsters! Release some first.' });
         }
 
         // Fetch monster base stats to calculate max HP for the caught level
@@ -79,7 +108,7 @@ exports.catchMonster = async (req, res) => {
                 'N': 1.0, 'R': 1.5, 'SR': 2.0, 'SSR': 3.0, 'UR': 5.0, 'LR': 10.0
             }[monster.rarity] || 1.0;
 
-            const baseExp = (20 + (caughtLevel * 10)) * rarityMult;
+            const baseExp = (50 + (caughtLevel * 15)) * rarityMult;
             
             let hpPercent = currentHp / maxHp;
             if (hpPercent < 0) hpPercent = 0;
@@ -89,6 +118,18 @@ exports.catchMonster = async (req, res) => {
             
             if (expGain > 0) {
                 expResult = await Monster.addExp(activeMonster.id, expGain);
+                // Player gets 20% of catch EXP (reward for catching)
+                const playerExpGain = Math.floor(expGain * 0.2);
+                await Monster.addPlayerExp(userId, playerExpGain);
+                
+                res.json({ 
+                    message: 'Monster caught successfully!', 
+                    id: newId,
+                    expGain: expGain,
+                    playerExpGain: playerExpGain,
+                    expResult: expResult
+                });
+                return;
             }
         }
 
@@ -96,6 +137,7 @@ exports.catchMonster = async (req, res) => {
             message: 'Monster caught successfully!', 
             id: newId,
             expGain: expGain,
+            playerExpGain: 0,
             expResult: expResult
         });
     } catch (err) {
@@ -162,22 +204,26 @@ exports.winBattle = async (req, res) => {
     try {
         const { userId, userMonsterId, enemyLevel, enemyRarity, remainingHp } = req.body;
 
-        // Calculate EXP
-        // Base EXP = 20
-        // Level Factor = Enemy Level * 10
-        // Rarity Factor = N:1, R:1.5, etc.
+        // Calculate EXP for Monster
         const rarityMult = {
             'N': 1.0, 'R': 1.5, 'SR': 2.0, 'SSR': 3.0, 'UR': 5.0, 'LR': 10.0
         }[enemyRarity] || 1.0;
 
-        const expGain = Math.floor((20 + (enemyLevel * 10)) * rarityMult);
+        const expGain = Math.floor((50 + (enemyLevel * 15)) * rarityMult);
+        const monsterResult = await Monster.addExp(userMonsterId, expGain, remainingHp);
 
-        const result = await Monster.addExp(userMonsterId, expGain, remainingHp);
+        // --- PLAYER EXP ---
+        // Player gets 10% of monster EXP
+        const playerExpGain = Math.max(5, Math.floor(expGain * 0.1));
+        console.log(`Awarding Player EXP: ${playerExpGain} to User ${userId}`);
+        const playerResult = await Monster.addPlayerExp(userId, playerExpGain);
 
         res.json({
             message: 'Victory!',
             expGain: expGain,
-            ...result
+            playerExpGain: playerExpGain,
+            monster: monsterResult,
+            player: playerResult
         });
 
     } catch (err) {
@@ -191,6 +237,28 @@ exports.updateHp = async (req, res) => {
         const { userMonsterId, hp } = req.body;
         await Monster.updateHp(userMonsterId, hp);
         res.json({ message: 'HP Updated' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
+exports.releaseMonster = async (req, res) => {
+    try {
+        const { userId, userMonsterId } = req.body;
+        
+        // Check if it's the active monster
+        const active = await Monster.findActiveByUserId(userId);
+        if (active && active.id == userMonsterId) {
+            return res.status(400).json({ message: 'Cannot release an active monster! Equip another one first.' });
+        }
+
+        const success = await Monster.releaseMonster(userMonsterId, userId);
+        if (success) {
+            res.json({ message: 'Monster released into the wild.' });
+        } else {
+            res.status(404).json({ message: 'Monster not found.' });
+        }
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Server Error' });

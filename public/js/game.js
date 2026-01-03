@@ -55,8 +55,8 @@ Noise.seed(WORLD_SEED);
 
 // World & Camera System
 const world = {
-    width: 30000, 
-    height: 30000
+    width: 10000, // Increased from 4000 to 10000
+    height: 10000
 };
 
 const camera = {
@@ -66,55 +66,11 @@ const camera = {
     height: window.innerHeight
 };
 
-// Minimap Cache (To prevent lag on large maps)
-const minimapCache = document.createElement('canvas');
-const mmCtx = minimapCache.getContext('2d');
-const MM_SIZE = 250; 
-minimapCache.width = MM_SIZE;
-minimapCache.height = MM_SIZE;
-
-function generateMinimapCache() {
-    console.log("Generating Minimap Cache...");
-    const scale = MM_SIZE / world.width;
-    
-    mmCtx.fillStyle = '#000';
-    mmCtx.fillRect(0, 0, MM_SIZE, MM_SIZE);
-
-    // Draw Biomes (Static)
-    const step = 150; 
-    for (let my = 0; my < world.height; my += step) {
-        for (let mx = 0; mx < world.width; mx += step) {
-            const obj = getWorldObject(mx, my);
-            if (obj) {
-                if (obj === 'TREE') mmCtx.fillStyle = '#fff';
-                else if (obj === 'ROCK') mmCtx.fillStyle = '#666';
-                else if (obj === 'TALL_GRASS') mmCtx.fillStyle = '#1a3300';
-                mmCtx.fillRect(mx * scale, my * scale, step * scale, step * scale);
-            }
-        }
-    }
-
-    // Draw Town (Static)
-    mmCtx.fillStyle = town.color;
-    mmCtx.fillRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
-    mmCtx.strokeStyle = '#fff';
-    mmCtx.lineWidth = 1;
-    mmCtx.strokeRect(town.x * scale, town.y * scale, town.width * scale, town.height * scale);
-
-    // Draw Landmarks (Static)
-    landmarks.forEach(l => {
-        mmCtx.fillStyle = l.color;
-        mmCtx.fillRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
-        mmCtx.strokeStyle = '#fff';
-        mmCtx.strokeRect(l.x * scale, l.y * scale, l.w * scale, l.h * scale);
-    });
-}
-
 // Zoom Configuration
 // 1.0 = Normal (1 pixel = 1 unit)
 // 0.5 = Zoom Out (See 2x more area)
 // 0.6 = Balanced "Far" view
-const GAME_ZOOM = 0.9; 
+const GAME_ZOOM = 0.6; 
 
 // Set canvas size to match window size (Full Screen, No Black Bars)
 function resizeCanvas() {
@@ -151,7 +107,7 @@ const player = {
     x: world.width / 2, // Start in middle of world
     y: world.height / 2,
     size: 32,
-    speed: 4, // Slightly faster for larger map
+    speed: 6, // Slightly faster for larger map
     color: '#000'
 };
 
@@ -159,7 +115,7 @@ let isBattling = false;
 
 // Monster Spawning System
 const spawnedMonsters = [];
-const MAX_MONSTERS = 500; // Increased for 30k map
+const MAX_MONSTERS = 100; // Increased from 5 to 100 for large map
 
 // Rarity Config
 const RARITY_CONFIG = {
@@ -281,15 +237,19 @@ function spawnMonster() {
     let attempts = 0;
     let validPosition = false;
 
-    // Try to find a spot that is TALL_GRASS
-    while (!validPosition && attempts < 50) {
+    // Try to find a spot outside the town AND not on an object
+    while (!validPosition && attempts < 20) {
         x = Math.random() * (world.width - 50) + 25;
         y = Math.random() * (world.height - 50) + 25;
         
-        // Check if on TALL_GRASS
-        const obj = getWorldObject(x, y);
+        // Check if inside town
+        const inTown = (x > town.x && x < town.x + town.width && 
+                        y > town.y && y < town.y + town.height);
+        
+        // Check if on object (Tree/Rock)
+        const onObject = getWorldObject(x, y) !== null;
 
-        if (obj === 'TALL_GRASS') {
+        if (!inTown && !onObject) {
             validPosition = true;
         } else {
             attempts++;
@@ -1010,52 +970,6 @@ window.equipMonster = async function(userMonsterId) {
     }
 };
 
-function drawMinimap() {
-    const mmPadding = 20;
-    const mmX = mmPadding;
-    const mmY = 60; 
-    const scale = MM_SIZE / world.width;
-
-    ctx.save();
-    
-    // Draw Cached Minimap (Terrain, Town, Landmarks)
-    ctx.drawImage(minimapCache, mmX, mmY);
-
-    // Draw Border
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(mmX, mmY, MM_SIZE, MM_SIZE);
-
-    // Clip to minimap area for dynamic elements
-    ctx.beginPath();
-    ctx.rect(mmX, mmY, MM_SIZE, MM_SIZE);
-    ctx.clip();
-
-    // Draw Monsters (Dynamic)
-    spawnedMonsters.forEach(m => {
-        ctx.fillStyle = m.color;
-        ctx.fillRect(mmX + m.x * scale, mmY + m.y * scale, 2, 2);
-    });
-
-    // Draw Player (Dynamic)
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(mmX + player.x * scale, mmY + player.y * scale, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Draw Camera Viewport (Dynamic)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(
-        mmX + camera.x * scale, 
-        mmY + camera.y * scale, 
-        camera.width * scale, 
-        camera.height * scale
-    );
-
-    ctx.restore();
-}
-
 function draw() {
     // Clear screen (Viewport)
     ctx.fillStyle = '#000'; 
@@ -1199,8 +1113,6 @@ function draw() {
     ctx.fillStyle = '#fff';
     ctx.font = '20px monospace';
     ctx.fillText(`Pos: ${Math.round(player.x)}, ${Math.round(player.y)}`, 20, 30);
-
-    drawMinimap();
 }
 
 function gameLoop() {
@@ -1233,10 +1145,6 @@ function showAlert(msg, callback = null) {
 // Start game
 async function initGame() {
     console.log("Initializing game...");
-    
-    // Generate Minimap Cache once at start
-    generateMinimapCache();
-
     // Check for starter pack
     try {
         const response = await fetch('/api/my-monsters/1');
